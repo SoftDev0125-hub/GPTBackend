@@ -27,6 +27,8 @@ class GmailService:
         self.token_path = os.getenv('GOOGLE_TOKEN_PATH', 'token.json')
         self.service = None
         self._credentials = None
+        # Check for credentials in environment variable
+        self.credentials_json = os.getenv('GOOGLE_CREDENTIALS')
 
     async def _get_service(self):
         """Get or create Gmail API service"""
@@ -86,66 +88,83 @@ class GmailService:
         except:
             return False
 
+    def _get_credentials_data(self) -> dict:
+        """Get credentials data from file or environment variable"""
+        # First try environment variable
+        if self.credentials_json:
+            try:
+                return json.loads(self.credentials_json)
+            except json.JSONDecodeError:
+                pass
+        
+        # Fall back to file
+        if os.path.exists(self.credentials_path):
+            try:
+                with open(self.credentials_path, 'r') as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        
+        return None
+    
     def _detect_client_type(self) -> str:
         """Detect OAuth client type from credentials file"""
-        try:
-            with open(self.credentials_path, 'r') as f:
-                creds_data = json.load(f)
-                # Check if it's a web client (has redirect_uris) or installed app
-                if 'installed' in creds_data:
-                    return 'installed'
-                elif 'web' in creds_data:
-                    return 'web'
-                else:
-                    # Default to installed for backward compatibility
-                    return 'installed'
-        except Exception:
+        creds_data = self._get_credentials_data()
+        if not creds_data:
             return 'installed'  # Default
+        
+        # Check if it's a web client (has redirect_uris) or installed app
+        if 'installed' in creds_data:
+            return 'installed'
+        elif 'web' in creds_data:
+            return 'web'
+        else:
+            # Default to installed for backward compatibility
+            return 'installed'
     
     async def get_authorization_url(self) -> str:
         """Get OAuth authorization URL"""
-        if not os.path.exists(self.credentials_path):
+        creds_data = self._get_credentials_data()
+        if not creds_data:
             raise Exception(
-                f"Credentials file not found at {self.credentials_path}. "
-                "Please download OAuth 2.0 credentials from Google Cloud Console."
+                f"Credentials not found. Please set GOOGLE_CREDENTIALS environment variable "
+                "or provide credentials.json file. Download OAuth 2.0 credentials from Google Cloud Console."
             )
         
         client_type = self._detect_client_type()
         
+        # Create flow from credentials data (not file)
         if client_type == 'installed':
             # Desktop/Installed app flow
-            flow = InstalledAppFlow.from_client_secrets_file(
-                self.credentials_path, SCOPES)
+            flow = InstalledAppFlow.from_client_config(creds_data, SCOPES)
             flow.redirect_uri = 'urn:ietf:wg:oauth:2.0:oob'  # For installed apps
         else:
-            # Web application flow - use localhost redirect
-            flow = Flow.from_client_secrets_file(
-                self.credentials_path, SCOPES)
-            # Use localhost redirect URI for web apps
-            # Make sure this is added to your OAuth client's authorized redirect URIs
-            flow.redirect_uri = 'http://localhost:8000/oauth2callback'
+            # Web application flow - use Railway redirect
+            flow = Flow.from_client_config(creds_data, SCOPES)
+            # Use Railway redirect URI
+            flow.redirect_uri = 'https://web-production-5b9f.up.railway.app/oauth2callback'
         
         auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
         return auth_url
 
     async def handle_oauth_callback(self, code: str, redirect_uri: Optional[str] = None):
         """Handle OAuth callback and store credentials"""
-        if not os.path.exists(self.credentials_path):
-            raise Exception(f"Credentials file not found at {self.credentials_path}")
+        creds_data = self._get_credentials_data()
+        if not creds_data:
+            raise Exception("Credentials not found. Please set GOOGLE_CREDENTIALS environment variable or provide credentials.json file.")
         
         client_type = self._detect_client_type()
         
+        # Create flow from credentials data (not file)
         if client_type == 'installed':
             # Desktop/Installed app flow
-            flow = InstalledAppFlow.from_client_secrets_file(
-                self.credentials_path, SCOPES)
+            flow = InstalledAppFlow.from_client_config(creds_data, SCOPES)
             flow.redirect_uri = 'urn:ietf:wg:oauth:2.0:oob'
         else:
             # Web application flow
-            flow = Flow.from_client_secrets_file(
-                self.credentials_path, SCOPES)
-            # Use provided redirect_uri or default to localhost
-            flow.redirect_uri = redirect_uri or 'http://localhost:8000/oauth2callback'
+            flow = Flow.from_client_config(creds_data, SCOPES)
+            # Use provided redirect_uri or default to Railway URL
+            flow.redirect_uri = redirect_uri or 'https://web-production-5b9f.up.railway.app/oauth2callback'
         
         # Fetch token
         flow.fetch_token(code=code)
