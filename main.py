@@ -233,7 +233,10 @@ async def oauth2_callback(code: Optional[str] = None, error: Optional[str] = Non
         return HTMLResponse(content=html_content)
     
     try:
-        await gmail_service.handle_oauth_callback(code, redirect_uri='http://localhost:8000/oauth2callback')
+        # Use Railway URL for redirect
+        railway_url = os.getenv('RAILWAY_PUBLIC_DOMAIN', 'https://web-production-5b9f.up.railway.app')
+        redirect_uri = f"{railway_url}/oauth2callback"
+        await gmail_service.handle_oauth_callback(code, redirect_uri=redirect_uri)
         html_success = """
         <!DOCTYPE html>
         <html>
